@@ -5,20 +5,20 @@
 services:
   entra:
     profiles: [identity]
-    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:?see versions.env}
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:?see versions.env}@${ENTRA_EMULATOR_DIGEST:?see versions.env}
     ports:
       - "18473:8443"
 
   keyvault:
     profiles: [identity]
-    image: ghcr.io/calvinchengx/azure-keyvault-emulator:${KEYVAULT_EMULATOR_VERSION:?see versions.env}
+    image: ghcr.io/calvinchengx/azure-keyvault-emulator:${KEYVAULT_EMULATOR_VERSION:?see versions.env}@${KEYVAULT_EMULATOR_DIGEST:?see versions.env}
     ports:
       - "18474:8444"
     environment:
       KV_ENTRA_ISSUER: "https://entra:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
 
   uc:
-    image: unitycatalog/unitycatalog:${UC_VERSION:?see versions.env}
+    image: unitycatalog/unitycatalog:${UC_VERSION:?see versions.env}@${UC_DIGEST:?see versions.env}
     ports:
       - "18471:8080"
     healthcheck:
@@ -29,7 +29,7 @@ services:
       start_period: 20s
 
   sail:
-    image: ghcr.io/calvinchengx/emulator-sail:${SAIL_VERSION:?see versions.env}
+    image: ghcr.io/calvinchengx/emulator-sail:${SAIL_VERSION:?see versions.env}@${SAIL_DIGEST:?see versions.env}
     depends_on:
       uc:
         condition: service_healthy
@@ -50,7 +50,7 @@ services:
       retries: 30
 
   spark-agent:
-    image: ghcr.io/calvinchengx/emulator-spark-agent:${SPARK_AGENT_VERSION:?see versions.env}
+    image: ghcr.io/calvinchengx/emulator-spark-agent:${SPARK_AGENT_VERSION:?see versions.env}@${SPARK_AGENT_DIGEST:?see versions.env}
     depends_on:
       sail:
         condition: service_healthy
@@ -67,7 +67,7 @@ services:
       retries: 30
 
   databricks:
-    image: ghcr.io/calvinchengx/databricks-emulator:${DATABRICKS_EMULATOR_VERSION:?see versions.env}
+    image: ghcr.io/calvinchengx/databricks-emulator:${DATABRICKS_EMULATOR_VERSION:?see versions.env}@${DATABRICKS_EMULATOR_DIGEST:?see versions.env}
     depends_on:
       spark-agent:
         condition: service_healthy

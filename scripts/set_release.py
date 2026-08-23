@@ -10,6 +10,9 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import digests  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VERSIONS = ROOT / "versions.env"
 PYPROJECT = ROOT / "pyproject.toml"
@@ -62,10 +65,23 @@ def main() -> int:
     missing = [k for k in TRACKS_THE_RELEASE if k not in moved]
     if missing:
         sys.exit(f"{VERSIONS.name} has no {', '.join(missing)} to set")
+    # THE DIGEST MOVES WITH THE TAG. Docker ignores the tag in
+    # `repo:tag@sha256:...` and fetches the digest, so writing a new version
+    # beside the old digest would pull the PREVIOUS image while the run reports
+    # the new release — a release test for a release nobody ran. Resolved
+    # BEFORE the write, so a tag that is not published yet fails here rather
+    # than leaving versions.env naming images that do not exist.
+    new, digest_before = digests.rewrite(
+        new, "DATABRICKS_EMULATOR",
+        digests.digest_of(digests.PINS["DATABRICKS_EMULATOR"][0], version))
+
     VERSIONS.write_text(new, encoding="utf-8")
     for key, old in moved.items():
         note = "  (unchanged)" if old == version else ""
         print(f"  {key}: {old} -> {version}{note}")
+    after = digests.value(new, "DATABRICKS_EMULATOR_DIGEST")
+    print(f"  DATABRICKS_EMULATOR_DIGEST: {digest_before[:19]}… -> {after[:19]}…"
+          f"{'  (unchanged)' if digest_before == after else ''}")
 
     # The Python client comes from the same release as the image.
     proj = PYPROJECT.read_text(encoding="utf-8")
