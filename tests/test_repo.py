@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import pathlib
 import re
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -523,3 +524,96 @@ def test_the_committed_vendor_ports_match_what_the_generator_emits():
     assert committed == emitted, (
         "vendor-ports.json is stale; regenerate it (see this test's docstring)"
     )
+# --- digest pins ---------------------------------------------------------------
+#
+# `emulator-sail:X` and `emulator-spark-agent:X` are tagged for the dependency
+# they carry, not their content, so one tag can be republished over different
+# code. Docker also IGNORES the tag in `repo:tag@sha256:...` — the digest wins
+# silently — which makes a digest left behind worse than no digest at all.
+
+def _scripts():
+    sys.path.insert(0, str(ROOT / "scripts"))
+
+
+def test_every_pinned_image_has_both_a_version_and_a_digest():
+    _scripts()
+    from digests import PINS
+
+    text = (ROOT / "versions.env").read_text(encoding="utf-8")
+    for prefix in PINS:
+        assert re.search(rf"^{prefix}_VERSION=.+$", text, re.M), prefix
+        assert re.search(rf"^{prefix}_DIGEST=sha256:[0-9a-f]{{64}}$", text, re.M), prefix
+
+
+def test_the_compose_file_fetches_those_images_by_digest():
+    _scripts()
+    from digests import PINS
+
+    compose = (ROOT / "compose" / "docker-compose.yml").read_text(encoding="utf-8")
+    for prefix, image in PINS.items():
+        for line in compose.splitlines():
+            if f"image: {image}:" in line:
+                assert f"@${{{prefix}_DIGEST" in line, f"pulled by tag alone: {line.strip()}"
+                break
+        else:
+            raise AssertionError(f"{image} is not referenced in the compose file")
+
+
+def test_a_release_moves_the_emulator_digest_with_its_version(tmp_path):
+    """End to end through main(), because that is where the wiring can be cut.
+
+    Asserting the helper alone would pass with the call deleted from `main()` —
+    measured on the sibling repo, where exactly that mutation left every other
+    test green.
+    """
+    _scripts()
+    import set_release
+
+    versions = tmp_path / "versions.env"
+    versions.write_text((ROOT / "versions.env").read_text(encoding="utf-8"),
+                        encoding="utf-8")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text((ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+                         encoding="utf-8")
+    fake = "sha256:" + "d" * 64
+    saved = (set_release.VERSIONS, set_release.PYPROJECT,
+             set_release.digests.digest_of, sys.argv)
+    try:
+        set_release.VERSIONS = versions
+        set_release.PYPROJECT = pyproject
+        set_release.digests.digest_of = lambda image, tag: fake
+        sys.argv = ["set_release.py", "9.9.9"]
+        set_release.main()
+    finally:
+        (set_release.VERSIONS, set_release.PYPROJECT,
+         set_release.digests.digest_of, sys.argv) = saved
+
+    written = versions.read_text(encoding="utf-8")
+    assert re.search(r"^DATABRICKS_EMULATOR_VERSION=9\.9\.9$", written, re.M)
+    assert re.search(rf"^DATABRICKS_EMULATOR_DIGEST={fake}$", written, re.M), (
+        "the version moved and the digest did not — docker would pull the old image")
+
+
+def test_refresh_digests_rewrites_every_pin(tmp_path):
+    """The hand-bump path. SAIL and SPARK_AGENT follow fabric-emulator's
+    cadence, so a person edits those versions and nothing else would move the
+    digests."""
+    _scripts()
+    import digests as d
+    import refresh_digests
+
+    versions = tmp_path / "versions.env"
+    versions.write_text((ROOT / "versions.env").read_text(encoding="utf-8"),
+                        encoding="utf-8")
+    fake = "sha256:" + "e" * 64
+    saved = (refresh_digests.VERSIONS, d.digest_of, refresh_digests.digest_of)
+    try:
+        refresh_digests.VERSIONS = versions
+        refresh_digests.digest_of = lambda image, tag: fake
+        refresh_digests.main()
+    finally:
+        refresh_digests.VERSIONS, d.digest_of, refresh_digests.digest_of = saved
+
+    written = versions.read_text(encoding="utf-8")
+    for prefix in d.PINS:
+        assert re.search(rf"^{prefix}_DIGEST={fake}$", written, re.M), prefix
