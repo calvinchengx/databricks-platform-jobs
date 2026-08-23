@@ -10,11 +10,27 @@ docker ignores the tag in `repo:tag@sha256:...`.
 import re
 import subprocess
 
-# var prefix -> the image its _VERSION tags
+# digest var prefix -> (image, the var that supplies its tag)
+#
+# THE TAG VAR IS NAMED SEPARATELY because one version can feed several images:
+# `OPENMETADATA_VERSION` tags both `openmetadata-postgresql` and
+# `openmetadata-server`, which are different images with different digests. A
+# single OPENMETADATA_DIGEST would have pinned one and silently mis-pinned the
+# other.
 PINS = {
-    "DATABRICKS_EMULATOR": "ghcr.io/calvinchengx/databricks-emulator",
-    "SAIL": "ghcr.io/calvinchengx/emulator-sail",
-    "SPARK_AGENT": "ghcr.io/calvinchengx/emulator-spark-agent",
+    "DATABRICKS_EMULATOR": ("ghcr.io/calvinchengx/databricks-emulator",
+                            "DATABRICKS_EMULATOR_VERSION"),
+    "SAIL": ("ghcr.io/calvinchengx/emulator-sail", "SAIL_VERSION"),
+    "SPARK_AGENT": ("ghcr.io/calvinchengx/emulator-spark-agent", "SPARK_AGENT_VERSION"),
+    "ENTRA_EMULATOR": ("ghcr.io/calvinchengx/entra-emulator", "ENTRA_EMULATOR_VERSION"),
+    "KEYVAULT_EMULATOR": ("ghcr.io/calvinchengx/azure-keyvault-emulator",
+                          "KEYVAULT_EMULATOR_VERSION"),
+    "UC": ("unitycatalog/unitycatalog", "UC_VERSION"),
+    "OPENMETADATA_PG": ("ghcr.io/calvinchengx/openmetadata-postgresql",
+                        "OPENMETADATA_VERSION"),
+    "OPENMETADATA_SERVER": ("ghcr.io/calvinchengx/openmetadata-server",
+                            "OPENMETADATA_VERSION"),
+    "OPENSEARCH": ("opensearchproject/opensearch", "OPENSEARCH_VERSION"),
 }
 
 

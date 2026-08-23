@@ -73,7 +73,7 @@ def main() -> int:
     # than leaving versions.env naming images that do not exist.
     new, digest_before = digests.rewrite(
         new, "DATABRICKS_EMULATOR",
-        digests.digest_of(digests.PINS["DATABRICKS_EMULATOR"], version))
+        digests.digest_of(digests.PINS["DATABRICKS_EMULATOR"][0], version))
 
     VERSIONS.write_text(new, encoding="utf-8")
     for key, old in moved.items():

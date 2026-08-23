@@ -22,8 +22,8 @@ VERSIONS = pathlib.Path(__file__).resolve().parent.parent / "versions.env"
 def main() -> int:
     text = VERSIONS.read_text(encoding="utf-8")
     changed = 0
-    for prefix, image in PINS.items():
-        tag = value(text, f"{prefix}_VERSION")
+    for prefix, (image, tag_var) in PINS.items():
+        tag = value(text, tag_var)
         digest = digest_of(image, tag)
         text, before = rewrite(text, prefix, digest)
         moved = before != digest

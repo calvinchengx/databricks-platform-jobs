@@ -5,20 +5,20 @@
 services:
   entra:
     profiles: [identity]
-    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:?see versions.env}
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:?see versions.env}@${ENTRA_EMULATOR_DIGEST:?see versions.env}
     ports:
       - "18473:8443"
 
   keyvault:
     profiles: [identity]
-    image: ghcr.io/calvinchengx/azure-keyvault-emulator:${KEYVAULT_EMULATOR_VERSION:?see versions.env}
+    image: ghcr.io/calvinchengx/azure-keyvault-emulator:${KEYVAULT_EMULATOR_VERSION:?see versions.env}@${KEYVAULT_EMULATOR_DIGEST:?see versions.env}
     ports:
       - "18474:8444"
     environment:
       KV_ENTRA_ISSUER: "https://entra:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
 
   uc:
-    image: unitycatalog/unitycatalog:${UC_VERSION:?see versions.env}
+    image: unitycatalog/unitycatalog:${UC_VERSION:?see versions.env}@${UC_DIGEST:?see versions.env}
     ports:
       - "18471:8080"
     healthcheck:

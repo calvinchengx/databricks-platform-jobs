@@ -540,8 +540,8 @@ def test_every_pinned_image_has_both_a_version_and_a_digest():
     from digests import PINS
 
     text = (ROOT / "versions.env").read_text(encoding="utf-8")
-    for prefix in PINS:
-        assert re.search(rf"^{prefix}_VERSION=.+$", text, re.M), prefix
+    for prefix, (_image, tag_var) in PINS.items():
+        assert re.search(rf"^{tag_var}=.+$", text, re.M), tag_var
         assert re.search(rf"^{prefix}_DIGEST=sha256:[0-9a-f]{{64}}$", text, re.M), prefix
 
 
@@ -549,8 +549,9 @@ def test_the_compose_file_fetches_those_images_by_digest():
     _scripts()
     from digests import PINS
 
-    compose = (ROOT / "compose" / "docker-compose.yml").read_text(encoding="utf-8")
-    for prefix, image in PINS.items():
+    compose = "\n".join(p.read_text(encoding="utf-8")
+                        for p in sorted((ROOT / "compose").glob("*.yml")))
+    for prefix, (image, _tag_var) in PINS.items():
         for line in compose.splitlines():
             if f"image: {image}:" in line:
                 assert f"@${{{prefix}_DIGEST" in line, f"pulled by tag alone: {line.strip()}"
@@ -617,3 +618,16 @@ def test_refresh_digests_rewrites_every_pin(tmp_path):
     written = versions.read_text(encoding="utf-8")
     for prefix in d.PINS:
         assert re.search(rf"^{prefix}_DIGEST={fake}$", written, re.M), prefix
+
+
+def test_every_image_in_every_compose_file_is_digest_pinned():
+    """Wider than the PINS walk above: it catches a service added later, and it
+    caught the governance overlay pulling openmetadata and opensearch by tag
+    while the main compose file was fully pinned."""
+    for path in sorted((ROOT / "compose").glob("*.yml")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("image:"):
+                continue
+            assert "@${" in stripped or "@sha256:" in stripped, (
+                f"{path.name}: pulled by tag alone: {stripped}")
