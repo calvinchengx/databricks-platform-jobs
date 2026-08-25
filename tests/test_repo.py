@@ -18,7 +18,7 @@ def test_pins_are_immutable():
             k, v = line.split("=", 1)
             pins[k.strip()] = v.strip()
     assert "DATABRICKS_EMULATOR_VERSION" in pins
-    assert "SAIL_VERSION" in pins
+    assert "SAIL_ENGINE_VERSION" in pins
     assert "UC_VERSION" in pins
     mutable = {"latest", "stable", "main", "edge"}
     for k, v in pins.items():
@@ -27,10 +27,21 @@ def test_pins_are_immutable():
 
 def test_compose_reads_every_pin():
     composed = "".join(p.read_text(encoding="utf-8") for p in (ROOT / "compose").glob("*.yml"))
+    # A _RELEASE is NOT an image reference and compose must not substitute one.
+    # It records which fabric-emulator release built an image whose tag names a
+    # dependency instead: `emulator-sail:0.7.0` says which Sail is inside and
+    # nothing about the launcher beside it, which moves every fabric release
+    # under that same tag. Its reader is the pin check, which takes the label
+    # off the pinned digest and fails if this file disagrees -- so the rule is
+    # unchanged, a pin nothing reads is a comment, and the reader is CI.
+    pin_check = (ROOT / ".github" / "workflows" / "pins.yml").read_text(encoding="utf-8")
     for line in (ROOT / "versions.env").read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k = line.split("=", 1)[0].strip()
+            if k.endswith("_RELEASE"):
+                assert k[: -len("_RELEASE")] in pin_check, k
+                continue
             assert "${" + k in composed, k
 
 
@@ -114,8 +125,8 @@ def test_set_release_moves_only_the_emulator_pin(tmp_path, monkeypatch):
     new, moved = mod.set_version(text, "0.2.0")
     assert "DATABRICKS_EMULATOR_VERSION" in moved
     assert "DATABRICKS_EMULATOR_VERSION=0.2.0" in new
-    assert "SAIL_VERSION=" in new
-    sail = [ln for ln in text.splitlines() if ln.startswith("SAIL_VERSION=")][0]
+    assert "SAIL_ENGINE_VERSION=" in new
+    sail = [ln for ln in text.splitlines() if ln.startswith("SAIL_ENGINE_VERSION=")][0]
     assert sail in new
 
 
@@ -596,7 +607,7 @@ def test_a_release_moves_the_emulator_digest_with_its_version(tmp_path):
 
 
 def test_refresh_digests_rewrites_every_pin(tmp_path):
-    """The hand-bump path. SAIL and SPARK_AGENT follow fabric-emulator's
+    """The hand-bump path. SAIL_ENGINE and SPARK_CLIENT follow fabric-emulator's
     cadence, so a person edits those versions and nothing else would move the
     digests."""
     _scripts()

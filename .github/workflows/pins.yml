@@ -1,0 +1,117 @@
+# The two Databricks cells must run the SAME stack, or a difference in their
+# gold numbers is unattributable -- it could be the orchestrator or it could be
+# the engine, and nobody could say which.
+#
+# THIS CELL HAD NO PIN CHECK AT ALL until now, so the comparison only ever
+# ran from the other side and only when someone opened a pull request there.
+#
+# THIS RUNS ON A SCHEDULE BECAUSE THE DRIFT ARRIVES FROM ANOTHER REPOSITORY.
+# It used to be a step in ci.yml, which fires on push and pull_request -- both
+# of which need a commit HERE. When the jobs cell moved SAIL_VERSION to 0.33.0
+# this repository did not change, so nothing ran, and the drift sat undetected
+# until a pull request was opened weeks later for an unrelated reason. The
+# check was correct the whole time; it was simply never asked. See G53 in
+# contoso-data-product/docs/01-plan.md.
+#
+# GitHub disables schedules in a repository with 60 days of no activity, and
+# says so by email. If this stops reporting, that is the first thing to check.
+name: Pins
+
+on:
+  schedule:
+    - cron: '35 6 * * *' # daily -- the sibling can move on any day
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: # so a suspected drift can be confirmed without waiting
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pins-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pins:
+    name: pins match the databricks airflow3 cell
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: compare against the jobs cell
+        run: |
+          set -a; . ./versions.env; set +a
+          curl -fsSL https://raw.githubusercontent.com/calvinchengx/databricks-platform-airflow3/main/versions.env -o /tmp/sibling.env
+          fail=0
+          # BOTH halves of every pin. versions.env warns that docker ignores
+          # the tag in `repo:tag@sha256:...` -- the digest silently wins -- so
+          # comparing versions alone would pass two cells that agree on the
+          # label and pull different bytes. That is the exact failure the
+          # digests exist to prevent, and it was not being checked.
+          for name in DATABRICKS_EMULATOR SAIL_ENGINE SPARK_CLIENT; do
+            halves="VERSION DIGEST"
+            case $name in SAIL_ENGINE|SPARK_CLIENT) halves="VERSION DIGEST RELEASE";; esac
+            for half in $halves; do
+              var="${name}_${half}"
+              mine=$(eval echo \$$var)
+              theirs=$(grep -E "^$var=" /tmp/sibling.env | cut -d= -f2- || true)
+              if [ -z "$theirs" ]; then
+                echo "::warning::$var is not pinned by databricks-platform-airflow3"
+              elif [ "$mine" != "$theirs" ]; then
+                echo "::error::$var is $mine here and $theirs in the jobs cell"
+                fail=1
+              else
+                echo "ok $var=$mine"
+              fi
+            done
+          done
+          if [ "$fail" = 1 ]; then
+            echo "::notice::Bump both halves together with scripts/refresh_digests.py -- editing a version without its digest keeps pulling the old image."
+          fi
+          exit $fail
+
+      - name: the release label matches what versions.env claims
+        run: |
+          set -a; . ./versions.env; set +a
+          fail=0
+          # emulator-sail and emulator-spark-agent are tagged for the DEPENDENCY
+          # they carry, so `0.7.0` says which Sail is inside and nothing about
+          # the launcher beside it -- which moves every fabric-emulator release
+          # and is republished under that same tag.
+          #
+          # NOT CHECKED HERE, unlike the Fabric cells: that the engine's release
+          # equals the emulator's. This repository pins no fabric-emulator
+          # version -- it runs databricks-emulator and merely consumes fabric's
+          # sidecars -- so there is no local number to anchor that to. The
+          # cross-cell comparison above is what keeps the two Databricks cells
+          # on one engine release.
+          for pair in "SAIL_ENGINE emulator-sail" "SPARK_CLIENT emulator-spark-agent"; do
+            set -- $pair; name=$1; img=ghcr.io/calvinchengx/$2
+            v=$(eval echo \$${name}_VERSION)
+            d=$(eval echo \$${name}_DIGEST)
+            r=$(eval echo \$${name}_RELEASE)
+
+            # 1. The tag still names THIS build. If the dependency moved on --
+            #    pysail 0.7.0 -> 0.8.0 -- the old tag stops pointing here and the
+            #    pin quietly keeps an engine nobody chose.
+            actual=$(docker buildx imagetools inspect "$img:$v" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
+            if [ -z "$actual" ]; then
+              echo "::error::$img:$v does not resolve -- has the dependency version moved?"; fail=1
+            elif [ "$actual" != "$d" ]; then
+              echo "::error::$img:$v now resolves to $actual, but ${name}_DIGEST pins $d. The tag was republished, or the dependency moved."; fail=1
+            fi
+
+            # 2. _RELEASE is DERIVED. Read it off the image rather than trusting
+            #    the file, or it is a comment that happens to look checked.
+            label=$(docker buildx imagetools inspect "$img@$d" --format '{{json .Image}}' 2>/dev/null \
+              | python3 -c "import json,sys;d=json.load(sys.stdin);v={((i.get('config') or {}).get('Labels') or {}).get('org.opencontainers.image.version') for i in d.values()};v.discard(None);print(sorted(v)[0] if len(v)==1 else '')" || true)
+            if [ -z "$label" ]; then
+              echo "::error::$img@$d carries no single org.opencontainers.image.version label"; fail=1
+            elif [ "$label" != "$r" ]; then
+              echo "::error::${name}_RELEASE says $r but the image says $label"; fail=1
+            fi
+            [ "$fail" = 0 ] && echo "ok $name: tag $v -> $d, packaged by $label"
+          done
+          exit $fail
