@@ -7,6 +7,7 @@ the one that was not edited would leave a digest behind — and a digest left
 behind is not a stale pin, it is the WRONG IMAGE running silently, because
 docker ignores the tag in `repo:tag@sha256:...`.
 """
+import json
 import re
 import subprocess
 
@@ -20,8 +21,9 @@ import subprocess
 PINS = {
     "DATABRICKS_EMULATOR": ("ghcr.io/calvinchengx/databricks-emulator",
                             "DATABRICKS_EMULATOR_VERSION"),
-    "SAIL": ("ghcr.io/calvinchengx/emulator-sail", "SAIL_VERSION"),
-    "SPARK_AGENT": ("ghcr.io/calvinchengx/emulator-spark-agent", "SPARK_AGENT_VERSION"),
+    "SAIL_ENGINE": ("ghcr.io/calvinchengx/emulator-sail", "SAIL_ENGINE_VERSION"),
+    "SPARK_CLIENT": ("ghcr.io/calvinchengx/emulator-spark-agent",
+                     "SPARK_CLIENT_VERSION"),
     "ENTRA_EMULATOR": ("ghcr.io/calvinchengx/entra-emulator", "ENTRA_EMULATOR_VERSION"),
     "KEYVAULT_EMULATOR": ("ghcr.io/calvinchengx/azure-keyvault-emulator",
                           "KEYVAULT_EMULATOR_VERSION"),
@@ -62,4 +64,45 @@ def rewrite(text: str, prefix: str, digest: str) -> tuple[str, str]:
     """Set one _DIGEST, returning the new text and what it was."""
     before = value(text, f"{prefix}_DIGEST")
     return re.sub(rf"^{prefix}_DIGEST=.*$", f"{prefix}_DIGEST={digest}",
+                  text, flags=re.M), before
+
+
+# The images whose tag names a DEPENDENCY rather than a release, so the release
+# that packaged them has to be read from the image itself.
+TAGGED_BY_DEPENDENCY = ("SAIL_ENGINE", "SPARK_CLIENT")
+
+
+def release_of(image: str, tag: str) -> str:
+    """The fabric-emulator release that built this image, from its OCI label.
+
+    `emulator-sail:0.7.0` says which Sail is inside and NOTHING about the
+    launcher beside it, which moves every fabric release and is republished
+    under that same tag. The release is in org.opencontainers.image.version,
+    baked at build time, so this reads the image rather than trusting a copy.
+
+    Every platform in the index must agree: one build, one release.
+    """
+    out = subprocess.run(
+        ["docker", "buildx", "imagetools", "inspect", f"{image}:{tag}",
+         "--format", "{{json .Image}}"],
+        capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit(f"cannot read labels for {image}:{tag}: "
+                         f"{(out.stderr or out.stdout).strip()[:200]}")
+    found = {
+        ((per or {}).get("config") or {}).get("Labels", {})
+        .get("org.opencontainers.image.version")
+        for per in json.loads(out.stdout).values()
+    }
+    found.discard(None)
+    if len(found) != 1:
+        raise SystemExit(
+            f"{image}:{tag} does not carry one release label: {sorted(found)}")
+    return found.pop()
+
+
+def rewrite_release(text: str, prefix: str, release: str) -> tuple[str, str]:
+    """Set one _RELEASE, returning the new text and what it was."""
+    before = value(text, f"{prefix}_RELEASE")
+    return re.sub(rf"^{prefix}_RELEASE=.*$", f"{prefix}_RELEASE={release}",
                   text, flags=re.M), before
