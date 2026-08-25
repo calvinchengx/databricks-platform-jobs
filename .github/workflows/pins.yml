@@ -43,7 +43,8 @@ jobs:
       - name: compare against the jobs cell
         run: |
           set -a; . ./versions.env; set +a
-          curl -fsSL https://raw.githubusercontent.com/calvinchengx/databricks-platform-airflow3/main/versions.env -o /tmp/sibling.env
+          SIB=databricks-platform-airflow3
+          curl -fsSL "https://raw.githubusercontent.com/calvinchengx/$SIB/main/versions.env" -o /tmp/sibling.env
           fail=0
           # BOTH halves of every pin. versions.env warns that docker ignores
           # the tag in `repo:tag@sha256:...` -- the digest silently wins -- so
@@ -58,9 +59,9 @@ jobs:
               mine=$(eval echo \$$var)
               theirs=$(grep -E "^$var=" /tmp/sibling.env | cut -d= -f2- || true)
               if [ -z "$theirs" ]; then
-                echo "::warning::$var is not pinned by databricks-platform-airflow3"
+                echo "::warning::$var is not pinned by $SIB"
               elif [ "$mine" != "$theirs" ]; then
-                echo "::error::$var is $mine here and $theirs in the jobs cell"
+                echo "::error::$var is $mine here and $theirs in $SIB"
                 fail=1
               else
                 echo "ok $var=$mine"
