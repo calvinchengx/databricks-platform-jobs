@@ -618,17 +618,37 @@ def test_refresh_digests_rewrites_every_pin(tmp_path):
     versions.write_text((ROOT / "versions.env").read_text(encoding="utf-8"),
                         encoding="utf-8")
     fake = "sha256:" + "e" * 64
-    saved = (refresh_digests.VERSIONS, d.digest_of, refresh_digests.digest_of)
+    fake_release = "9.9.9"
+    # BOTH registry calls are stubbed. refresh_digests now reads the release
+    # label as well as the digest for the dependency-tagged images, and each
+    # shells out to docker -- which the macOS and Windows runners do not have.
+    # Stubbing only the digest left this passing on ubuntu and failing on the
+    # other two, which is how it was caught.
+    saved = (
+        refresh_digests.VERSIONS,
+        d.digest_of,
+        refresh_digests.digest_of,
+        refresh_digests.release_of,
+    )
     try:
         refresh_digests.VERSIONS = versions
         refresh_digests.digest_of = lambda image, tag: fake
+        refresh_digests.release_of = lambda image, tag: fake_release
         refresh_digests.main()
     finally:
-        refresh_digests.VERSIONS, d.digest_of, refresh_digests.digest_of = saved
+        (
+            refresh_digests.VERSIONS,
+            d.digest_of,
+            refresh_digests.digest_of,
+            refresh_digests.release_of,
+        ) = saved
 
     written = versions.read_text(encoding="utf-8")
     for prefix in d.PINS:
         assert re.search(rf"^{prefix}_DIGEST={fake}$", written, re.M), prefix
+    # And the release moved for exactly the images whose tag cannot say it.
+    for prefix in d.TAGGED_BY_DEPENDENCY:
+        assert re.search(rf"^{prefix}_RELEASE={fake_release}$", written, re.M), prefix
 
 
 def test_every_image_in_every_compose_file_is_digest_pinned():
