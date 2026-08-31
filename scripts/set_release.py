@@ -1,7 +1,26 @@
-"""Point this repository at a specific databricks-emulator release.
+"""Point versions.env at a release. TWO cadences, because this cell has two.
 
-Sail and spark-agent ship on fabric-emulator's cadence. Only the workspace
-binary moves with a databricks-emulator tag.
+`DATABRICKS_EMULATOR_VERSION` and the databricks-target wheel move with a
+databricks-emulator release. `SAIL_ENGINE_RELEASE` and `SPARK_CLIENT_RELEASE`
+do not: Sail and the statement agent are built and published by
+**fabric-emulator**, so what a fabric release moves is their digest and the
+label recording which release built them.
+
+    python3 scripts/set_release.py --databricks 0.2.9
+    python3 scripts/set_release.py --fabric 0.35.0
+
+THE FABRIC CADENCE HAD NO ARGUMENT AT ALL until 0.35.0. A bare version was
+read as a databricks one, so `set_release.py 0.35.0` answered
+
+    cannot read digest for ghcr.io/calvinchengx/databricks-emulator:0.35.0: not found
+
+and the fabric half of this cell's pins had to be hand-edited during every
+fabric sweep. Hand-editing is what leaves a _RELEASE label naming last month's
+release above this month's digest, which is the drift this script exists to
+prevent. databricks-platform-airflow3 grew the same two flags for the same
+reason; this is that idea, using THIS repository's `digests` module rather
+than a copy of the sibling's script, which has no databricks-target wheel to
+move and no digests module to reuse.
 """
 
 from __future__ import annotations
@@ -54,12 +73,56 @@ def set_wheel(text: str, version: str) -> tuple[str, int]:
     return new, n
 
 
+# Which images a fabric release moves here, and the variable prefix each uses.
+CARRIES_A_FABRIC_RELEASE = ("SAIL_ENGINE", "SPARK_CLIENT")
+
+
+def set_fabric(version: str) -> int:
+    """Move the fabric-built sidecars: their digests and their release labels.
+
+    NOT their _VERSION. Those name the dependency each image carries (pysail
+    0.7.0, pyspark-client 4.2.0) and a fabric release does not change them; it
+    republishes the same tag over new bytes. So the digest and the _RELEASE
+    label are the whole of what moves, and a version left beside a stale digest
+    would have docker pull the previous image while versions.env named the new
+    release.
+    """
+    text = VERSIONS.read_text(encoding="utf-8")
+    for prefix in CARRIES_A_FABRIC_RELEASE:
+        image = digests.PINS[prefix][0]
+        digest = digests.digest_of(image, version)
+        text, before = digests.rewrite(text, prefix, digest)
+        text, release_before = digests.rewrite_release(text, prefix, version)
+        after = digests.value(text, f"{prefix}_DIGEST")
+        print(f"  {image}:{version} -> {digest[:19]}…")
+        print(f"    {prefix}_DIGEST: {before[:19]}… -> {after[:19]}…"
+              f"{'  (unchanged)' if before == after else ''}")
+        print(f"    {prefix}_RELEASE: {release_before} -> {version}"
+              f"{'  (unchanged)' if release_before == version else ''}")
+    VERSIONS.write_text(text, encoding="utf-8")
+    print("  DATABRICKS_EMULATOR_VERSION is NOT moved: it ships on the "
+          "databricks-emulator cadence. Use --databricks for that.")
+    return 0
+
+
 def main() -> int:
-    if len(sys.argv) != 2:
-        sys.exit("usage: set_release.py <version>   e.g. set_release.py 0.2.0")
-    version = sys.argv[1].lstrip("v")
+    argv = sys.argv[1:]
+    if len(argv) == 2 and argv[0] in ("--databricks", "--fabric"):
+        cadence, raw = argv
+    elif len(argv) == 1 and not argv[0].startswith("-"):
+        # THE BARE FORM STILL MEANS DATABRICKS, so every existing caller and
+        # every existing test keeps working. Only the new cadence needs a flag.
+        cadence, raw = "--databricks", argv[0]
+    else:
+        sys.exit("usage: set_release.py [--databricks|--fabric] <version>\n"
+                 "  --databricks 0.2.9   the workspace binary and its client\n"
+                 "  --fabric 0.35.0      Sail and the statement agent\n"
+                 "  a bare version means --databricks")
+    version = raw.lstrip("v")
     if not SEMVER.match(version):
         sys.exit(f"not a version: {version!r} — expected something like 0.2.0")
+    if cadence == "--fabric":
+        return set_fabric(version)
     text = VERSIONS.read_text(encoding="utf-8")
     new, moved = set_version(text, version)
     missing = [k for k in TRACKS_THE_RELEASE if k not in moved]
