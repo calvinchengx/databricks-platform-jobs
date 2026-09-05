@@ -52,7 +52,14 @@ config:
 token:  ## Put the workspace credential where the product can read it
 	$(UV) run --frozen --group dev python scripts/compose.py cp databricks:/data/admin.pat $(PRODUCT)/data/admin.pat
 
+# THE PIN THE PLATFORM CANNOT SEE. versions.env pins the emulator IMAGE; the
+# product pins the client WHEEL, and since the split those live in two
+# repositories. A binary and a client that disagree about the contract is the
+# one mismatch a consumer repository exists to notice, so the check runs
+# against whatever product this platform was actually pointed at -- before any
+# step does work that a mismatch would invalidate.
 verify: doctor token
+	$(UV) run --frozen --group dev python scripts/check_product_pin.py $(PRODUCT)
 	$(STEP) --group engine python steps/provision.py
 	$(STEP) --group engine python steps/seed_secrets.py
 	$(STEP) --group engine python steps/ingest.py
