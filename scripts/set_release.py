@@ -28,6 +28,7 @@ from __future__ import annotations
 import pathlib
 import re
 import sys
+import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import digests  # noqa: E402
@@ -73,20 +74,51 @@ def set_wheel(text: str, version: str) -> tuple[str, int]:
     return new, n
 
 
-# Which images a fabric release moves here, and the variable prefix each uses.
-CARRIES_A_FABRIC_RELEASE = ("SAIL_ENGINE", "SPARK_CLIENT")
+# Which images a fabric release moves here, and the pin in fabric-emulator's
+# pyproject.toml each is tagged with. The same map as fabric-emulator's
+# scripts/image_tags.py.
+TAGGED_BY = {"SAIL_ENGINE": "pysail", "SPARK_CLIENT": "pyspark-client"}
+CARRIES_A_FABRIC_RELEASE = tuple(TAGGED_BY)
+
+# A TAG, not a branch: what the release was built from, and it cannot move.
+FABRIC_PYPROJECT = ("https://raw.githubusercontent.com/calvinchengx/"
+                    "fabric-emulator/v{release}/pyproject.toml")
+
+
+def fetch(url: str) -> str:
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        return resp.read().decode("utf-8")
+
+
+def carried_versions(release: str) -> dict[str, str]:
+    """The dependency version each sidecar carries in fabric `release`.
+
+    Read with image_tags.py's own rule: exactly one `==` pin per package.
+    """
+    url = FABRIC_PYPROJECT.format(release=release)
+    try:
+        text = fetch(url)
+    except OSError as err:
+        raise SystemExit(f"cannot read {url}: {err}") from None
+    carried = {}
+    for prefix, package in TAGGED_BY.items():
+        found = set(re.findall(rf'"{re.escape(package)}==([0-9][^"]*)"', text))
+        if len(found) != 1:
+            raise SystemExit(f"v{release} pins {package} as {sorted(found) or 'nothing'}; "
+                             f"expected exactly one == version")
+        carried[prefix] = found.pop()
+    return carried
 
 
 def set_fabric(version: str) -> int:
-    """Move the fabric-built sidecars: their digests and their release labels.
+    """Move the fabric-built sidecars: digest, release label and _VERSION.
 
-    NOT their _VERSION. Those name the dependency each image carries (pysail
-    0.7.0, pyspark-client 4.2.0) and a fabric release does not change them; it
-    republishes the same tag over new bytes. So the digest and the _RELEASE
-    label are the whole of what moves, and a version left beside a stale digest
-    would have docker pull the previous image while versions.env named the new
-    release.
+    The digest comes from the release's own tag. _VERSION names the dependency
+    each image carries (pysail, pyspark-client), so it never takes the release
+    number; it moves to whatever that release ships. This used to hold it
+    still, and v0.36.0 moved pysail 0.7.0 -> 0.7.1.
     """
+    carried = carried_versions(version)
     text = VERSIONS.read_text(encoding="utf-8")
     for prefix in CARRIES_A_FABRIC_RELEASE:
         image = digests.PINS[prefix][0]
@@ -99,6 +131,11 @@ def set_fabric(version: str) -> int:
               f"{'  (unchanged)' if before == after else ''}")
         print(f"    {prefix}_RELEASE: {release_before} -> {version}"
               f"{'  (unchanged)' if release_before == version else ''}")
+        dep_before = digests.value(text, f"{prefix}_VERSION")
+        text = re.sub(rf"^{prefix}_VERSION=.*$", f"{prefix}_VERSION={carried[prefix]}",
+                      text, flags=re.M)
+        print(f"    {prefix}_VERSION: {dep_before} -> {carried[prefix]}"
+              f"{'  (unchanged)' if dep_before == carried[prefix] else ''}")
     VERSIONS.write_text(text, encoding="utf-8")
     print("  DATABRICKS_EMULATOR_VERSION is NOT moved: it ships on the "
           "databricks-emulator cadence. Use --databricks for that.")
