@@ -130,6 +130,80 @@ def test_set_release_moves_only_the_emulator_pin(tmp_path, monkeypatch):
     assert sail in new
 
 
+
+def _set_release():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "set_release", ROOT / "scripts" / "set_release.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_a_fabric_release_moves_each_sidecar_version_to_what_it_carries(
+    tmp_path, monkeypatch
+):
+    """v0.36.0 moved pysail 0.7.0 -> 0.7.1 and `--fabric` left
+    SAIL_ENGINE_VERSION at 0.7.0 beside the 0.36.0 digest. The version now
+    comes from the release's own pyproject.toml, the digest from its own tag,
+    and the databricks pin does not move at all."""
+    mod = _set_release()
+    versions = tmp_path / "versions.env"
+    original = (ROOT / "versions.env").read_text(encoding="utf-8")
+    versions.write_text(original, encoding="utf-8")
+    fake = "sha256:" + "9" * 64
+    resolved = []
+    pyproject = (
+        'dependencies = ["pysail==8.8.8", "pyspark-client==7.7.7"]\n'
+        'engine = ["pysail==8.8.8"]\n'
+    )
+    monkeypatch.setattr(mod, "VERSIONS", versions)
+    monkeypatch.setattr(
+        mod.digests, "digest_of", lambda image, tag: resolved.append(tag) or fake
+    )
+    monkeypatch.setattr(
+        mod, "fetch", lambda url: pyproject if "/v9.9.9/" in url else ""
+    )
+    monkeypatch.setattr(sys, "argv", ["set_release.py", "--fabric", "9.9.9"])
+    assert mod.main() == 0
+
+    written = versions.read_text(encoding="utf-8")
+    assert set(resolved) == {"9.9.9"}, resolved
+    assert re.search(r"^SAIL_ENGINE_VERSION=8\.8\.8$", written, re.M)
+    assert re.search(r"^SPARK_CLIENT_VERSION=7\.7\.7$", written, re.M)
+    for prefix in mod.CARRIES_A_FABRIC_RELEASE:
+        assert re.search(rf"^{prefix}_RELEASE=9\.9\.9$", written, re.M), prefix
+        assert re.search(rf"^{prefix}_DIGEST={fake}$", written, re.M), prefix
+    was = re.search(r"^DATABRICKS_EMULATOR_VERSION=.*$", original, re.M).group(0)
+    assert was in written, "a fabric release moved the databricks pin"
+
+
+def test_a_fabric_release_with_an_ambiguous_dependency_pin_writes_nothing(
+    tmp_path, monkeypatch
+):
+    import pytest
+
+    mod = _set_release()
+    versions = tmp_path / "versions.env"
+    original = (ROOT / "versions.env").read_text(encoding="utf-8")
+    versions.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(mod, "VERSIONS", versions)
+    monkeypatch.setattr(
+        mod.digests, "digest_of", lambda image, tag: "sha256:" + "8" * 64
+    )
+    monkeypatch.setattr(
+        mod,
+        "fetch",
+        lambda url: '"pysail==0.7.0" "pysail==0.7.1" "pyspark-client==4.2.0"',
+    )
+    monkeypatch.setattr(sys, "argv", ["set_release.py", "--fabric", "9.9.9"])
+    with pytest.raises(SystemExit, match="pysail"):
+        mod.main()
+    assert versions.read_text(encoding="utf-8") == original
+
+
 def test_the_vendor_stack_is_generated_from_the_sources_declaration():
     """The vendors are contoso-sources', not this repository's.
 
