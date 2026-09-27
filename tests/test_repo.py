@@ -640,7 +640,8 @@ def test_the_compose_file_fetches_those_images_by_digest():
                         for p in sorted((ROOT / "compose").glob("*.yml")))
     for prefix, (image, _tag_var) in PINS.items():
         for line in compose.splitlines():
-            if re.search(rf"image: (?:mirror\.gcr\.io/(?:library/)?)?{re.escape(image)}:", line):
+            pulled = rf"image: (?:mirror\.gcr\.io/(?:library/)?)?{re.escape(image)}:"
+            if re.search(pulled, line):
                 assert f"@${{{prefix}_DIGEST" in line, f"pulled by tag alone: {line.strip()}"
                 break
         else:
