@@ -18,7 +18,7 @@ services:
       KV_ENTRA_ISSUER: "https://entra:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
 
   uc:
-    image: unitycatalog/unitycatalog:${UC_VERSION:?see versions.env}@${UC_DIGEST:?see versions.env}
+    image: mirror.gcr.io/unitycatalog/unitycatalog:${UC_VERSION:?see versions.env}@${UC_DIGEST:?see versions.env}
     ports:
       - "18471:8080"
     healthcheck:
