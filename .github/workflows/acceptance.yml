@@ -9,6 +9,9 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     name: Verify the released emulator end to end
@@ -20,7 +23,7 @@ jobs:
       run:
         working-directory: databricks-platform-jobs
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           path: databricks-platform-jobs
@@ -34,12 +37,12 @@ jobs:
       # green by editing another repository. A SHA is also what this workflow
       # already does for every third-party action. Move it deliberately, and
       # only when the family's numbers move.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: calvinchengx/contoso-data-product
           ref: 2cf7bae8a1e1f4a8cddd2cd5510d435e16febb3b
           path: contoso-data-product
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: calvinchengx/databricks-emulator
           path: databricks-emulator
@@ -49,7 +52,7 @@ jobs:
       # mount point, which is empty -- so a run that forgot this would fail at
       # the first step rather than quietly verifying nothing, but it would fail
       # for a confusing reason.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: calvinchengx/contoso-data-product-databricks-jobs
           path: contoso-data-product-databricks-jobs
@@ -59,18 +62,18 @@ jobs:
       # the workspace root here. It is not optional and it is not a fixture we
       # could vendor: the point of reading the declaration is that this
       # platform's vendor list is not a copy.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: calvinchengx/contoso-sources
           path: contoso-sources
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.3"
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: GHCR login
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
         working-directory: ${{ github.workspace }}
       - if: github.event_name == 'repository_dispatch'
         name: Point at the released version
@@ -85,9 +88,11 @@ jobs:
         # databricks_target from the v0.2.4 wheel and said nothing.
         run: |
           uv run --no-project python scripts/set_release.py \
-            "${{ github.event.client_payload.version }}"
+            "${GITHUB_EVENT_CLIENT_PAYLOAD_VERSION}"
           uv lock
           git --no-pager diff --stat versions.env pyproject.toml uv.lock
+        env:
+          GITHUB_EVENT_CLIENT_PAYLOAD_VERSION: ${{ github.event.client_payload.version }}
       # The BYTES, not just the declaration. compose.py refuses without them:
       # mokapi serves the exports from _data/, and an unmaterialised checkout
       # stands up vendors that answer nothing.
